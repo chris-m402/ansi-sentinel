@@ -1,0 +1,12 @@
+[package]
+name = "ansi-sentinel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Strict-by-default scanner for ANSI/VT terminal escape sequences, with an explicit lenient mode."
+repository = "https://github.com/chris-m402/ansi-sentinel"
+readme = "README.md"
+keywords = ["ansi", "terminal", "escape-sequences", "vt100"]
+categories = ["parser-implementations", "command-line-interface"]
+
+[dependencies]
