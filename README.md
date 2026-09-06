@@ -68,7 +68,14 @@ Early. The scanner recognizes CSI sequences (`ESC [ ... final byte`), the
 two-byte `Fe` escapes (`ESC` + one final byte, e.g. `ESC c`), and
 intermediate-plus-final `nF` escapes (e.g. `ESC ( B`). It does not yet parse
 the contents of OSC/DCS/SOS/PM/APC string sequences — those are flagged as
-unsupported rather than misread. See the roadmap for what's next.
+unsupported rather than misread.
+
+Once you have a CSI `Event::Escape`, `csi::parse_csi_params` turns its
+parameter fields into `Vec<Option<u32>>` (`None` for an omitted field, so
+`ESC[1;;3m` parses as `[Some(1), None, Some(3)]`). It only handles the plain
+`;`-separated numeric form; private-marker sequences like `ESC[?25h` and
+colon sub-parameters like `ESC[38:2:255:0:0m` return `None` since a generic
+parser can't assign them a meaning.
 
 ## License
 

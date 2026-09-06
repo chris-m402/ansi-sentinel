@@ -6,10 +6,12 @@
 //! error instead of guessing, [`Mode::Lenient`] recovers the way a real
 //! terminal would.
 
+pub mod csi;
 mod error;
 mod mode;
 mod scanner;
 
+pub use csi::{parse_csi_params, CsiParam};
 pub use error::ScanError;
 pub use mode::Mode;
 pub use scanner::{EscapeScanner, Event};
