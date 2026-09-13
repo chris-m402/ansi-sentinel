@@ -50,8 +50,7 @@ assert!(events.iter().all(|e| e.is_ok()));
 ## Strict vs. lenient
 
 - **Strict** (default): unterminated sequences, unexpected bytes inside a
-  sequence, too many parameters, an oversized parameter, or a sequence type
-  this scanner doesn't parse yet (OSC/DCS/SOS/PM/APC strings) all produce a
+  sequence, too many parameters, or an oversized parameter all produce a
   `ScanError` that names the byte offset of the sequence. Use this when you
   are deciding whether to trust or display input you did not generate
   yourself, and would rather reject the whole thing than render half of a
@@ -65,10 +64,13 @@ assert!(events.iter().all(|e| e.is_ok()));
 ## Status
 
 Early. The scanner recognizes CSI sequences (`ESC [ ... final byte`), the
-two-byte `Fe` escapes (`ESC` + one final byte, e.g. `ESC c`), and
-intermediate-plus-final `nF` escapes (e.g. `ESC ( B`). It does not yet parse
-the contents of OSC/DCS/SOS/PM/APC string sequences — those are flagged as
-unsupported rather than misread.
+two-byte `Fe` escapes (`ESC` + one final byte, e.g. `ESC c`),
+intermediate-plus-final `nF` escapes (e.g. `ESC ( B`), and the
+string-terminated OSC/DCS/SOS/PM/APC sequences. Those string sequences must
+end in `ST` (`ESC \`); OSC additionally accepts a bare `BEL`, matching what
+xterm and most real senders use for things like window-title updates. A
+stray control byte or unescaped `ESC` inside one of those strings ends it as
+malformed rather than being absorbed as content.
 
 Once you have a CSI `Event::Escape`, `csi::parse_csi_params` turns its
 parameter fields into `Vec<Option<u32>>` (`None` for an omitted field, so

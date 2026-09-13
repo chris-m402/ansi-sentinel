@@ -17,10 +17,6 @@ pub enum ScanError {
     TooManyParameters { start: usize },
     /// A single parameter had more digits than `MAX_PARAM_LEN` allows.
     ParameterTooLarge { start: usize },
-    /// The sequence is a recognized introducer (OSC, DCS, SOS, PM, or APC)
-    /// for a string-terminated control sequence, which this scanner does
-    /// not parse yet.
-    UnsupportedSequence { start: usize, byte: u8 },
 }
 
 impl ScanError {
@@ -32,7 +28,6 @@ impl ScanError {
             ScanError::DisallowedByte { start, .. } => start,
             ScanError::TooManyParameters { start } => start,
             ScanError::ParameterTooLarge { start } => start,
-            ScanError::UnsupportedSequence { start, .. } => start,
         }
     }
 }
@@ -59,12 +54,6 @@ impl fmt::Display for ScanError {
                 write!(
                     f,
                     "parameter too long in escape sequence starting at byte {start}"
-                )
-            }
-            ScanError::UnsupportedSequence { start, byte } => {
-                write!(
-                    f,
-                    "unsupported string sequence (introducer 0x{byte:02X}) starting at byte {start}"
                 )
             }
         }

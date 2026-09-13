@@ -26,9 +26,9 @@ pub enum Event<'a> {
     /// A complete, well-formed escape sequence, including its leading `ESC`.
     Escape(&'a [u8]),
     /// In [`Mode::Lenient`] only: bytes that looked like the start of an
-    /// escape sequence but could not be parsed, or that belong to a kind of
-    /// sequence this scanner does not support yet. Skipped rather than
-    /// surfaced as text so callers don't accidentally render control bytes.
+    /// escape sequence but turned out malformed, oversized, or unterminated.
+    /// Skipped rather than surfaced as text so callers don't accidentally
+    /// render control bytes.
     Invalid(&'a [u8]),
 }
 
@@ -38,7 +38,6 @@ enum Outcome {
     Disallowed(u8),
     TooManyParams,
     ParamTooLong,
-    UnsupportedString(u8),
 }
 
 /// Scans a byte slice into a sequence of [`Event`]s.
@@ -79,8 +78,6 @@ impl<'a> EscapeScanner<'a> {
             Outcome::TooManyParams => Err(ScanError::TooManyParameters { start }),
             Outcome::ParamTooLong if lenient => Ok(Event::Escape(&self.input[start..end])),
             Outcome::ParamTooLong => Err(ScanError::ParameterTooLarge { start }),
-            Outcome::UnsupportedString(_) if lenient => Ok(Event::Invalid(&self.input[start..end])),
-            Outcome::UnsupportedString(byte) => Err(ScanError::UnsupportedSequence { start, byte }),
             Outcome::Disallowed(_) if lenient => Ok(Event::Invalid(&self.input[start..end])),
             Outcome::Disallowed(byte) => Err(ScanError::DisallowedByte { start, byte }),
             Outcome::Unterminated if lenient => Ok(Event::Invalid(&self.input[start..end])),
@@ -99,20 +96,7 @@ impl<'a> EscapeScanner<'a> {
         }
         match bytes[i] {
             b'[' => self.scan_csi(i + 1),
-            OSC | DCS | SOS | PM | APC => {
-                let introducer = bytes[i];
-                let mut j = i + 1;
-                while j < len {
-                    if bytes[j] == BEL {
-                        return (j + 1, Outcome::UnsupportedString(introducer));
-                    }
-                    if bytes[j] == ESC && j + 1 < len && bytes[j + 1] == b'\\' {
-                        return (j + 2, Outcome::UnsupportedString(introducer));
-                    }
-                    j += 1;
-                }
-                (len, Outcome::UnsupportedString(introducer))
-            }
+            OSC | DCS | SOS | PM | APC => self.scan_control_string(bytes[i], i + 1),
             0x40..=0x7E => (i + 1, Outcome::Complete),
             0x20..=0x2F => {
                 i += 1;
@@ -177,6 +161,46 @@ impl<'a> EscapeScanner<'a> {
             }
         }
         (i, violation.unwrap_or(Outcome::Unterminated))
+    }
+
+    /// `content_start` points just past the introducer byte of an
+    /// OSC/DCS/SOS/PM/APC sequence. Scans its string body up to the
+    /// terminator.
+    ///
+    /// Every one of these introducers accepts the two-byte string
+    /// terminator `ST` (`ESC \`). OSC additionally accepts a bare `BEL`,
+    /// which is not in ECMA-48 but is how xterm has terminated OSC since
+    /// before ST was common and is what most real-world senders still use
+    /// for things like window-title updates. DCS/SOS/PM/APC get no such
+    /// exception: a `BEL` inside one of those is just a disallowed control
+    /// byte.
+    ///
+    /// Body bytes are otherwise restricted to the printable range
+    /// (0x20..=0x7E). That excludes a raw `ESC` not immediately followed by
+    /// `\`, which would otherwise let an unterminated string silently
+    /// swallow whatever comes after it, including sequences a caller needs
+    /// to see.
+    fn scan_control_string(&self, introducer: u8, content_start: usize) -> (usize, Outcome) {
+        let bytes = self.input;
+        let len = bytes.len();
+        let mut j = content_start;
+        while j < len {
+            match bytes[j] {
+                BEL if introducer == OSC => return (j + 1, Outcome::Complete),
+                ESC => {
+                    return if j + 1 >= len {
+                        (j, Outcome::Unterminated)
+                    } else if bytes[j + 1] == b'\\' {
+                        (j + 2, Outcome::Complete)
+                    } else {
+                        (j, Outcome::Disallowed(ESC))
+                    };
+                }
+                0x20..=0x7E => j += 1,
+                b => return (j, Outcome::Disallowed(b)),
+            }
+        }
+        (j, Outcome::Unterminated)
     }
 }
 
@@ -275,28 +299,103 @@ mod tests {
     }
 
     #[test]
-    fn osc_is_unsupported_in_strict_mode() {
-        let input = b"\x1b]0;title\x07";
+    fn osc_terminated_by_bel_is_accepted() {
+        let input = b"\x1b]0;title\x07after";
         let got = events(input, Mode::Strict);
         assert_eq!(
             got,
-            vec![Err(ScanError::UnsupportedSequence {
-                start: 0,
-                byte: b']'
-            })]
+            vec![
+                Ok(Event::Escape(b"\x1b]0;title\x07")),
+                Ok(Event::Text(b"after")),
+            ]
         );
     }
 
     #[test]
-    fn osc_is_skipped_as_invalid_in_lenient_mode() {
-        let input = b"\x1b]0;title\x07after";
+    fn osc_terminated_by_st_is_accepted() {
+        let input = b"\x1b]0;title\x1b\\after";
+        let got = events(input, Mode::Strict);
+        assert_eq!(
+            got,
+            vec![
+                Ok(Event::Escape(b"\x1b]0;title\x1b\\")),
+                Ok(Event::Text(b"after")),
+            ]
+        );
+    }
+
+    #[test]
+    fn dcs_requires_st_and_rejects_bel() {
+        // DCS (ESC P) has no BEL exception, unlike OSC: BEL is just a
+        // disallowed byte inside its string.
+        let input = b"\x1bP1$q\x07";
+        let got = events(input, Mode::Strict);
+        assert_eq!(
+            got,
+            vec![Err(ScanError::DisallowedByte { start: 0, byte: BEL })]
+        );
+    }
+
+    #[test]
+    fn dcs_terminated_by_st_is_accepted() {
+        let input = b"\x1bP1$q\x1b\\";
+        let got = events(input, Mode::Strict);
+        assert_eq!(got, vec![Ok(Event::Escape(b"\x1bP1$q\x1b\\"))]);
+    }
+
+    #[test]
+    fn sos_pm_apc_are_accepted() {
+        assert_eq!(
+            events(b"\x1bXdata\x1b\\", Mode::Strict),
+            vec![Ok(Event::Escape(b"\x1bXdata\x1b\\"))]
+        );
+        assert_eq!(
+            events(b"\x1b^data\x1b\\", Mode::Strict),
+            vec![Ok(Event::Escape(b"\x1b^data\x1b\\"))]
+        );
+        assert_eq!(
+            events(b"\x1b_data\x1b\\", Mode::Strict),
+            vec![Ok(Event::Escape(b"\x1b_data\x1b\\"))]
+        );
+    }
+
+    #[test]
+    fn unterminated_control_string_errors_in_strict_mode() {
+        let input = b"\x1b]0;title";
+        let got = events(input, Mode::Strict);
+        assert_eq!(got, vec![Err(ScanError::UnterminatedSequence { start: 0 })]);
+    }
+
+    #[test]
+    fn unterminated_control_string_recovers_in_lenient_mode() {
+        let input = b"\x1b]0;title";
+        let got = events(input, Mode::Lenient);
+        assert_eq!(got, vec![Ok(Event::Invalid(b"\x1b]0;title"))]);
+    }
+
+    #[test]
+    fn embedded_esc_aborts_control_string_and_resumes_parsing() {
+        // The OSC string is never terminated; the ESC that starts the CSI
+        // sequence is left for the next call to `next` instead of being
+        // swallowed as string content.
+        let input = b"\x1b]0;title\x1b[31m";
         let got = events(input, Mode::Lenient);
         assert_eq!(
             got,
             vec![
-                Ok(Event::Invalid(b"\x1b]0;title\x07")),
-                Ok(Event::Text(b"after")),
+                Ok(Event::Invalid(b"\x1b]0;title")),
+                Ok(Event::Escape(b"\x1b[31m")),
             ]
+        );
+    }
+
+    #[test]
+    fn control_byte_inside_control_string_errors_in_strict_mode() {
+        let input = b"\x1b]0;ti\x01tle\x07";
+        let got = events(input, Mode::Strict);
+        assert_eq!(
+            got,
+            vec![Err(ScanError::DisallowedByte { start: 0, byte: 0x01 })]
         );
     }
 
