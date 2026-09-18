@@ -79,6 +79,14 @@ parameter fields into `Vec<Option<u32>>` (`None` for an omitted field, so
 colon sub-parameters like `ESC[38:2:255:0:0m` return `None` since a generic
 parser can't assign them a meaning.
 
+`sgr::parse_sgr` builds on that for the one CSI final byte almost every
+color-producing program cares about: `m`, Select Graphic Rendition. It turns
+a sequence like `ESC[1;38;5;196m` into `[Bold, Foreground(Indexed(196))]`,
+covering the standard and bright named colors, 256-color indices, and 24-bit
+RGB. Like the rest of this library it fails closed: a code it doesn't
+recognize, or an extended color selector with a missing argument, makes the
+whole sequence return `None` instead of dropping the attribute silently.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).

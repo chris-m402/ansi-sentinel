@@ -10,8 +10,10 @@ pub mod csi;
 mod error;
 mod mode;
 mod scanner;
+pub mod sgr;
 
 pub use csi::{parse_csi_params, CsiParam};
 pub use error::ScanError;
 pub use mode::Mode;
 pub use scanner::{EscapeScanner, Event};
+pub use sgr::{parse_sgr, Color, SgrAttribute};
