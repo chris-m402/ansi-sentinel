@@ -87,6 +87,12 @@ RGB. Like the rest of this library it fails closed: a code it doesn't
 recognize, or an extended color selector with a missing argument, makes the
 whole sequence return `None` instead of dropping the attribute silently.
 
+`tests/fuzz.rs` runs the scanner and both parsers against pseudo-random byte
+streams (a seeded xorshift generator, no external fuzzing toolchain) to check
+that lenient mode never errors and never drops a byte, that strict mode
+always terminates without panicking, and that neither parser panics on
+whatever the scanner hands back.
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
